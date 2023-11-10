@@ -3,6 +3,24 @@ use std::fmt;
 use bitfield_struct::bitfield;
 
 #[test]
+fn negative_signed() {
+    #[bitfield(u64)]
+    struct MyBitfield {
+        negative: i32,
+        #[bits(10)]
+        positive: u16,
+        #[bits(22)]
+        __: u32,
+    }
+
+    let val = MyBitfield::new()
+        .with_negative(-1)
+        .with_positive(0b11_1111_1111);
+    assert_eq!(val.negative(), -1);
+    assert_eq!(val.positive(), 0b11_1111_1111);
+}
+
+#[test]
 fn members() {
     /// A test bitfield with documentation
     #[bitfield(u64)]

@@ -277,7 +277,7 @@ use quote::{format_ident, quote, ToTokens};
 use std::stringify;
 use syn::parse::{Parse, ParseStream};
 use syn::spanned::Spanned;
-use syn::Token;
+use syn::{Token, Type};
 
 /// Creates a bitfield for this struct.
 ///
@@ -540,8 +540,17 @@ impl ToTokens for Member {
             bits,
             base_ty,
             default: _,
-            inner: Some(MemberInner { ident, ty, attrs, vis, into, from }),
-        } = self else {
+            inner:
+                Some(MemberInner {
+                    ident,
+                    ty,
+                    attrs,
+                    vis,
+                    into,
+                    from,
+                }),
+        } = self
+        else {
             return Default::default();
         };
 
@@ -663,11 +672,12 @@ fn parse_field(attrs: &[syn::Attribute], ty: &syn::Type, ignore: bool) -> syn::R
     // Find and parse the bits attribute
     for attr in attrs {
         let syn::Attribute {
-                style: syn::AttrStyle::Outer,
-                meta: syn::Meta::List(syn::MetaList { path, tokens, .. }),
-                ..
-        } = attr else {
-            continue
+            style: syn::AttrStyle::Outer,
+            meta: syn::Meta::List(syn::MetaList { path, tokens, .. }),
+            ..
+        } = attr
+        else {
+            continue;
         };
         if path.is_ident("bits") {
             let span = tokens.span();
@@ -720,6 +730,26 @@ fn parse_field(attrs: &[syn::Attribute], ty: &syn::Type, ignore: bool) -> syn::R
 
     // Signed integers need some special handling...
     if !ignore && class == TypeClass::SInt {
+        // come up with an equivalent unsigned type
+        let uty = match ty {
+            Type::Path(syn::TypePath { path, .. }) => {
+                let ident = path
+                    .segments
+                    .last()
+                    .expect("Type path has no segments")
+                    .ident
+                    .to_string();
+                match ident.as_str() {
+                    "i8" => quote! { u8 },
+                    "i16" => quote! { u16 },
+                    "i32" => quote! { u32 },
+                    "i64" => quote! { u64 },
+                    "i128" => quote! { u128 },
+                    _ => return Err(syn::Error::new_spanned(ty, "unsupported type")),
+                }
+            }
+            _ => return Err(syn::Error::new_spanned(ty, "Type must be a path")),
+        };
         let bits = ret.bits as u32;
         let mask = u128::MAX >> (u128::BITS - ret.bits as u32);
         let mask = syn::LitInt::new(&format!("0x{mask:x}"), Span::mixed_site());
@@ -728,7 +758,7 @@ fn parse_field(attrs: &[syn::Attribute], ty: &syn::Type, ignore: bool) -> syn::R
             ret.into = quote! {{
                 #[allow(unused_comparisons)]
                 debug_assert!(if this >= 0 { this & !#mask == 0 } else { !this & !#mask == 0 }, "value out of bounds");
-                (this & #mask) as _
+                (this & #mask) as #uty as _
             }};
         }
         if ret.from.is_empty() {
@@ -857,7 +887,7 @@ impl Parse for Params {
 
 /// Returns the number of bits for a given type
 fn type_bits(ty: &syn::Type) -> (TypeClass, usize) {
-    let syn::Type::Path(syn::TypePath{ path, .. }) = ty else {
+    let syn::Type::Path(syn::TypePath { path, .. }) = ty else {
         return (TypeClass::Other, 0);
     };
     let Some(ident) = path.get_ident() else {
